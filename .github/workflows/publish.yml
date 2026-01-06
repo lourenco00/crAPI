@@ -1,17 +1,17 @@
 name: Publish Images
 
 on:
-  push:
-    branches:
-      - 'develop'
-      - 'main'
-    tags:
-      - 'v*.*.*'
-    paths:
-      - 'services/**'
-      - 'postman_collections/**'
-      - 'deploy/**'
-      - '.github/workflows/**'
+  # push:
+  #   branches:
+  #     - 'develop'
+  #     - 'main'
+  #   tags:
+  #     - 'v*.*.*'
+  #   paths:
+  #     - 'services/**'
+  #     - 'postman_collections/**'
+  #     - 'deploy/**'
+  #     - '.github/workflows/**'
   workflow_dispatch:
 
 jobs:
