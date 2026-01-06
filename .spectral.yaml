@@ -1,2 +1,158 @@
 extends:
-  - "spectral:oas"
+  - spectral:oas
+
+# Reduce noise from documentation / style rules
+rules:
+  info-contact: off
+  info-description: off
+  operation-description: off
+  operation-tag-defined: off
+
+  # -------------------------
+  # Security-focused rules
+  # -------------------------
+
+  # 1) Enforce HTTPS servers (no plain http://)
+  security-https-servers:
+    description: "Servers must use HTTPS (no http://)."
+    message: "Server URL should use HTTPS: {{value}}"
+    severity: error
+    given: "$.servers[*].url"
+    then:
+      function: pattern
+      functionOptions:
+        match: "^https://"
+
+  # 2) Require global security OR per-operation security
+  security-requirements-present:
+    description: "API must declare security requirements globally or per operation."
+    message: "Missing security requirements. Define top-level 'security' or per-operation 'security'."
+    severity: error
+    given: "$"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          anyOf:
+            - required: ["security"]
+            - required: ["paths"]
+
+  # 3) For each operation: if it is not explicitly public, it must define security
+  # (Heuristic: allow explicitly public operations via x-public: true)
+  operation-security-required-unless-public:
+    description: "Operations must define security unless marked as public."
+    message: "Operation must define 'security' unless it is marked x-public: true."
+    severity: error
+    given: "$.paths[*][*]"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          anyOf:
+            - properties:
+                x-public:
+                  const: true
+            - required: ["security"]
+
+  # 4) If an operation is secured, it should document 401 + 403
+  operation-auth-responses:
+    description: "Secured operations should document 401 and 403 responses."
+    message: "Secured operation should document 401 and 403 responses."
+    severity: warn
+    given: "$.paths[*][*]"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          allOf:
+            - required: ["responses"]
+            - anyOf:
+                - properties:
+                    security:
+                      type: array
+                      minItems: 1
+                - properties:
+                    security:
+                      type: object
+            - properties:
+                responses:
+                  type: object
+                  required: ["401", "403"]
+
+  # 5) Ban apiKey authentication in query parameters (leaks in logs, caches, referers)
+  ban-apikey-in-query:
+    description: "API keys must not be passed via query parameters."
+    message: "API key in query is not allowed. Use headers or cookies instead."
+    severity: error
+    given: "$.components.securitySchemes[*]"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          not:
+            allOf:
+              - properties:
+                  type:
+                    const: apiKey
+              - properties:
+                  in:
+                    const: query
+
+  # 6) Require requestBody schema when requestBody exists (no untyped bodies)
+  requestbody-must-have-schema:
+    description: "requestBody must define a schema for application/json when present."
+    message: "requestBody should define content.application/json.schema."
+    severity: warn
+    given: "$.paths[*][*].requestBody"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required: ["content"]
+          properties:
+            content:
+              type: object
+              properties:
+                application/json:
+                  type: object
+                  required: ["schema"]
+
+  # 7) Require response schemas for JSON responses (helps Schemathesis & contract checks)
+  responses-json-must-have-schema:
+    description: "JSON responses should define a schema."
+    message: "Response {{path}} should define content.application/json.schema."
+    severity: warn
+    given: "$.paths[*][*].responses[*].content.application/json"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required: ["schema"]
+
+  # 8) Recommend additionalProperties: false on object schemas (reduces over-posting / mass assignment)
+  # (Warning because some APIs intentionally allow extra props)
+  object-schemas-should-disallow-additionalprops:
+    description: "Object schemas should set additionalProperties: false (reduces mass-assignment risk)."
+    message: "Consider setting additionalProperties: false for object schema at {{path}}."
+    severity: warn
+    given: "$..schema"
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          anyOf:
+            - not:
+                properties:
+                  type:
+                    const: object
+            - allOf:
+                - properties:
+                    type:
+                      const: object
+                - required: ["additionalProperties"]
