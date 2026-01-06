@@ -3,7 +3,7 @@ name: API Security (OpenAPI-driven) - crAPI
 on:
   workflow_dispatch:
   push:
-    branches: ["master", "main", "develop"]
+    branches: ["master", "main"]
 
 jobs:
   api-security:
@@ -16,10 +16,14 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl python3-pip npm docker-compose-plugin
+          sudo apt-get install -y jq curl python3-pip npm
           pip install --upgrade pip
 
-      # Ensure report files always exist
+      - name: Show Docker & Compose versions
+        run: |
+          docker --version
+          docker compose version || true
+
       - name: Prepare report files
         run: |
           echo "[]" > spectral-report.json
@@ -35,7 +39,6 @@ jobs:
 
       - name: Wait for crAPI to be ready
         run: |
-          # crAPI default targetUrl is commonly http://localhost:8888/
           for i in {1..60}; do
             if curl -fsS http://localhost:8888/ >/dev/null; then
               echo "crAPI is up!"
@@ -75,7 +78,6 @@ jobs:
 
       - name: Run Schemathesis (schema-based testing)
         run: |
-          # In your runner logs, Schemathesis expects --url (not --base-url)
           schemathesis run openapi-spec/crapi-openapi-spec.json \
             --url http://localhost:8888 \
             --checks all \
@@ -85,16 +87,13 @@ jobs:
         continue-on-error: true
 
       # --------------------
-      # Collect logs (useful for PoC)
+      # Logs + artifacts
       # --------------------
       - name: Dump crAPI logs (tail)
         if: always()
         run: |
           docker compose logs --no-color | tail -n 300 || true
 
-      # --------------------
-      # Upload artifacts
-      # --------------------
       - name: Upload API security reports
         uses: actions/upload-artifact@v4
         with:
