@@ -39,7 +39,6 @@ jobs:
         run: |
           mkdir -p reports
           echo "[]" > spectral-report.json
-          echo "{}" > schemathesis-report.json
           echo "" > compose-path.txt
 
       - name: Find docker compose file
@@ -109,7 +108,6 @@ jobs:
         continue-on-error: true
         run: |
           set -euxo pipefail
-          # Spectral exits 1 when it finds issues (that's expected for a scanner)
           spectral lint "$OPENAPI_SPEC" \
             --ruleset .spectral.yaml \
             --format json \
@@ -142,31 +140,17 @@ jobs:
           echo "Using base URL: $BASE_URL"
           echo "Using spec: $OPENAPI_SPEC"
 
-          rm -rf reports/schemathesis || true
-          mkdir -p reports/schemathesis
-
-          # In your Schemathesis version:
-          # - JSON report -> --report json --report-dir <dir>
+          # Your Schemathesis supports: junit, vcr, har (NOT json)
           schemathesis run "$OPENAPI_SPEC" \
             --url "$BASE_URL" \
             --checks all \
             --max-examples 50 \
-            --report json \
-            --report-dir reports/schemathesis \
+            --report junit \
+            --report-junit-path reports/schemathesis-report.xml \
           || true
 
-          echo "=== Schemathesis report files ==="
-          ls -la reports/schemathesis || true
-
-          # Normalize: pick the first json file as schemathesis-report.json
-          FIRST_JSON="$(find reports/schemathesis -type f -name "*.json" | head -n 1)"
-          if [ -n "$FIRST_JSON" ]; then
-            cp "$FIRST_JSON" schemathesis-report.json
-            echo "Copied $FIRST_JSON -> schemathesis-report.json"
-          else
-            echo "{}" > schemathesis-report.json
-            echo "No Schemathesis JSON report found; wrote empty report."
-          fi
+          echo "=== Schemathesis report written to ==="
+          ls -la reports || true
 
       - name: Dump crAPI logs (tail)
         if: always()
@@ -183,6 +167,5 @@ jobs:
           name: api-security-results
           path: |
             spectral-report.json
-            schemathesis-report.json
-            reports/schemathesis
+            reports/schemathesis-report.xml
             compose-path.txt
