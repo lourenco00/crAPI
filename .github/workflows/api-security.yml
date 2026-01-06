@@ -142,7 +142,7 @@ jobs:
             --checks all \
             --max-examples 50 \
             --report json \
-            --report-file schemathesis-report.json
+            --report-file schemathesis-report.json 
         continue-on-error: true
 
       - name: Dump crAPI logs (tail)
