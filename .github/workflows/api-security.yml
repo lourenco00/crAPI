@@ -35,8 +35,9 @@ jobs:
           echo "Using .spectral.yaml:"
           cat .spectral.yaml
 
-      - name: Prepare report files
+      - name: Prepare output folders / files
         run: |
+          mkdir -p reports
           echo "[]" > spectral-report.json
           echo "{}" > schemathesis-report.json
           echo "" > compose-path.txt
@@ -51,8 +52,8 @@ jobs:
             ls -la
             exit 1
           fi
-          echo "COMPOSE_FILE=$COMPOSE_FILE"
           echo "$COMPOSE_FILE" > compose-path.txt
+          echo "Using compose file: $COMPOSE_FILE"
 
       - name: Start crAPI via Docker Compose
         run: |
@@ -65,10 +66,7 @@ jobs:
       - name: Wait for crAPI to be ready (best-effort)
         run: |
           set -euxo pipefail
-
-          # Try a few common ports used by crAPI deployments
           CANDIDATES=("http://localhost:8888" "http://localhost:8080" "http://localhost:80" "http://localhost:3000")
-
           for base in "${CANDIDATES[@]}"; do
             echo "Testing base URL: $base"
             for i in {1..20}; do
@@ -80,55 +78,63 @@ jobs:
               sleep 3
             done
           done
-
-          echo "Could not confirm crAPI readiness on common ports."
-          echo "Dumping container logs (tail):"
+          echo "Could not confirm crAPI readiness on common ports. Continuing..."
           COMPOSE_FILE="$(cat compose-path.txt)"
           docker compose -f "$COMPOSE_FILE" logs --no-color | tail -n 200 || true
-          # Don't fail hard here; sometimes UI isn't on these ports but APIs still run.
-          echo "Continuing anyway..."
 
       - name: Locate OpenAPI spec
         run: |
           set -euxo pipefail
-
-          # crAPI repo usually contains openapi-spec/crapi-openapi-spec.json
           if [ -f openapi-spec/crapi-openapi-spec.json ]; then
             echo "OPENAPI_SPEC=openapi-spec/crapi-openapi-spec.json" >> $GITHUB_ENV
             exit 0
           fi
-
-          # fallback: search
           SPEC="$(find . -maxdepth 6 -type f \( -name "*openapi*.json" -o -name "*openapi*.yaml" -o -name "*openapi*.yml" \) | head -n 1)"
           if [ -z "$SPEC" ]; then
             echo "No OpenAPI spec found."
-            find . -maxdepth 6 -type f | head -n 200
             exit 1
           fi
-
-          echo "Found OpenAPI spec: $SPEC"
           echo "OPENAPI_SPEC=$SPEC" >> $GITHUB_ENV
+          echo "Found OpenAPI spec: $SPEC"
 
+      # --------------------
+      # Spectral
+      # --------------------
       - name: Install Spectral
         run: |
           npm install -g @stoplight/spectral-cli
           spectral --version
 
       - name: Run Spectral (OpenAPI lint)
+        continue-on-error: true
         run: |
           set -euxo pipefail
+          # Spectral exits 1 when it finds issues (that's expected for a scanner)
           spectral lint "$OPENAPI_SPEC" \
             --ruleset .spectral.yaml \
             --format json \
-            --output spectral-report.json
-        continue-on-error: true
+            --output spectral-report.json \
+          || true
 
+          echo "=== Spectral findings count ==="
+          if [ -s spectral-report.json ]; then
+            jq 'length' spectral-report.json || true
+            echo "=== First 20 findings (summary) ==="
+            jq -r '.[:20][] | "\(.severity)\t\(.code)\t\(.path)\t\(.message)"' spectral-report.json || true
+          else
+            echo "spectral-report.json empty or missing"
+          fi
+
+      # --------------------
+      # Schemathesis
+      # --------------------
       - name: Install Schemathesis
         run: |
           pip install schemathesis
           schemathesis --version
 
       - name: Run Schemathesis (schema-based testing)
+        continue-on-error: true
         run: |
           set -euxo pipefail
 
@@ -136,14 +142,31 @@ jobs:
           echo "Using base URL: $BASE_URL"
           echo "Using spec: $OPENAPI_SPEC"
 
-          # Schemathesis uses --url (not --base-url / --schema)
+          rm -rf reports/schemathesis || true
+          mkdir -p reports/schemathesis
+
+          # In your Schemathesis version:
+          # - JSON report -> --report json --report-dir <dir>
           schemathesis run "$OPENAPI_SPEC" \
             --url "$BASE_URL" \
             --checks all \
             --max-examples 50 \
             --report json \
-            --report-file schemathesis-report.json 
-        continue-on-error: true
+            --report-dir reports/schemathesis \
+          || true
+
+          echo "=== Schemathesis report files ==="
+          ls -la reports/schemathesis || true
+
+          # Normalize: pick the first json file as schemathesis-report.json
+          FIRST_JSON="$(find reports/schemathesis -type f -name "*.json" | head -n 1)"
+          if [ -n "$FIRST_JSON" ]; then
+            cp "$FIRST_JSON" schemathesis-report.json
+            echo "Copied $FIRST_JSON -> schemathesis-report.json"
+          else
+            echo "{}" > schemathesis-report.json
+            echo "No Schemathesis JSON report found; wrote empty report."
+          fi
 
       - name: Dump crAPI logs (tail)
         if: always()
@@ -161,4 +184,5 @@ jobs:
           path: |
             spectral-report.json
             schemathesis-report.json
+            reports/schemathesis
             compose-path.txt
