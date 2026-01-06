@@ -3,7 +3,7 @@ name: API Security (OpenAPI-driven) - crAPI (Spectral + Schemathesis)
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "master"]
+    branches: ["main", "master", "develop"]
 
 jobs:
   api-security:
